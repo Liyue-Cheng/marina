@@ -596,6 +596,8 @@ describe('SessionManager — createSession', () => {
     expect(decodedTmuxScript).not.toContain('case ');
     expect(decodedTmuxScript).not.toContain(';;');
     expect(decodedTmuxScript).not.toContain('exec tmux');
+    expect(decodedTmuxScript).not.toContain('read ans');
+    expect(decodedTmuxScript).toContain('if [ "$force" = "1" ]; then');
     expect(decodedTmuxScript).toContain('exit $?');
     expect(command).toContain('then exec "${SHELL:-/bin/sh}" -l; else');
     expect(command).toContain('tmux attach/create failed; falling back to shell.');
@@ -958,6 +960,40 @@ describe('SessionManager — createSession', () => {
     const args = FakePty.instances[0]!.args as string[];
     expect(args.some((a) => a.startsWith('ControlMaster='))).toBe(false);
     expect(args.some((a) => a.startsWith('ControlPath='))).toBe(false);
+  });
+
+  it('password 认证即使开启 ControlMaster 也不注入复用参数', async () => {
+    const adapter: PlatformAdapter = {
+      ...makeFakeAdapter(),
+      resolveExecutable(commandName: string) {
+        return commandName === 'ssh' ? 'C:\\Windows\\System32\\OpenSSH\\ssh.exe' : null;
+      },
+      getSshControlPath: () => '~/.ssh/cm-%r@%h:%p',
+    };
+    const { mgr } = makeManager({
+      adapter,
+      settings: makeStubSettingsManager({ enableControlMaster: true }),
+    });
+    const pathId = makePathId({ kind: 'ssh', sshProfileId: 'p1', path: '~' });
+    await mgr.createSession({
+      pathId,
+      templateId: 'shell',
+      ownerWindowId: 'w-1',
+      cols: 80,
+      rows: 24,
+      sshProfile: {
+        id: 'p1',
+        name: 'prod',
+        host: 'example.com',
+        port: 22,
+        username: 'alice',
+        authType: 'password',
+      },
+    });
+    const args = FakePty.instances[0]!.args as string[];
+    expect(args.some((a) => a.startsWith('ControlMaster='))).toBe(false);
+    expect(args.some((a) => a.startsWith('ControlPath='))).toBe(false);
+    expect(args.some((a) => a.startsWith('ControlPersist='))).toBe(false);
   });
 
   it('ProxyJump 缺失或空数组 → 不出现 -J', async () => {

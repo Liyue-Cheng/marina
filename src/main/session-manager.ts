@@ -627,7 +627,11 @@ export class SessionManager extends EventEmitter {
     // 收益:Linux/macOS / Cygwin OpenSSH 都吃这个路径。
     if (isSsh) {
       const settings = this.settingsManager.get();
-      if (settings.advanced.enableControlMaster) {
+      // Windows + password 认证下,ControlMaster 复用偶发卡在交互认证阶段
+      // (表现为 SSH 会话一直无输出,看似"连不上")。密码登录默认走一次性连接;
+      // key/agent 认证保留复用收益。
+      const allowControlMaster = input.sshProfile!.authType !== 'password';
+      if (settings.advanced.enableControlMaster && allowControlMaster) {
         sshLaunchOptions.enableControlMaster = true;
         sshLaunchOptions.controlPath = this.platformAdapter.getSshControlPath
           ? this.platformAdapter.getSshControlPath()
@@ -2044,21 +2048,16 @@ if [ "$count" = "1" ] && [ "$force" != "1" ]; then
   tmux -L marina attach-session -t "$sessions"
   exit $?
 fi
-printf '\\nMarina found tmux sessions for %s:\\n' "$base"
-n=1
-printf '%s\\n' "$sessions" | sed '/^$/d' | while IFS= read -r s; do printf '  %s) attach %s\\n' "$n" "$s"; n=$((n + 1)); done
-printf '  n) create new session\\nSelect: '
-read ans
-if [ "$ans" = "n" ] || [ "$ans" = "N" ] || [ -z "$ans" ]; then
+# 为了避免 SSH 首次渲染期 / 焦点竞争导致 read 卡住,这里保持无交互:
+# - force=1(同目录已有活动 session)时直接创建 base-N,不给菜单
+# - force!=1 时优先 attach base;否则 attach 列表第一项
+if [ "$force" = "1" ]; then
   new_session
 fi
-if ! printf '%s\\n' "$ans" | grep -Eq '^[0-9]+$'; then
-  new_session
+target=$(printf '%s\\n' "$sessions" | sed '/^$/d' | grep -E "^$base$" | head -n 1)
+if [ -z "$target" ]; then
+  target=$(printf '%s\\n' "$sessions" | sed '/^$/d' | head -n 1)
 fi
-if [ "$ans" -lt 1 ] 2>/dev/null; then
-  new_session
-fi
-target=$(printf '%s\\n' "$sessions" | sed '/^$/d' | sed -n "$ans"p)
 if [ -n "$target" ]; then
   tmux -L marina attach-session -t "$target"
   exit $?
